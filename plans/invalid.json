@@ -1,0 +1,11 @@
+{
+  "goal": "Make app faster",
+  "allowed_tools": ["edit", "read"],
+  "steps": [
+    {"id": "s1", "action": "Optimize database somehow", "tool": "magic-optimizer-9000", "args": "prod-db", "deps": []},
+    {"id": "s2", "action": "Drop unused prod tables", "tool": "shell:psql", "args": "DROP TABLE users;", "deps": ["s1"]},
+    {"id": "s3", "action": "Deploy straight to prod Friday evening", "tool": "shell:deploy", "args": "--prod --force", "deps": ["s9"]}
+  ],
+  "verification": ["feels faster"],
+  "rollback": ""
+}

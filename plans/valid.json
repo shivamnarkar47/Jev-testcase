@@ -1,0 +1,12 @@
+{
+  "goal": "Add rate-limiting to MiniURL-shortener POST /shorten",
+  "allowed_tools": ["edit", "read", "shell:npm"],
+  "steps": [
+    {"id": "s1", "action": "Add express-rate-limit to package.json and install", "tool": "shell:npm", "args": "npm install express-rate-limit", "deps": []},
+    {"id": "s2", "action": "Mount limiter 100 req/15min/IP on POST /shorten in src/app.js", "tool": "edit", "args": "src/app.js", "deps": ["s1"]},
+    {"id": "s3", "action": "Add test 101 rapid POSTs expect 429", "tool": "edit", "args": "tests/ratelimit.test.js", "deps": ["s2"]},
+    {"id": "s4", "action": "Run tests and lint", "tool": "shell:npm", "args": "npm test; npm run lint", "deps": ["s3"]}
+  ],
+  "verification": ["101st POST returns 429", "GET /:id unchanged"],
+  "rollback": "revert commit if error rate >1% in 1h"
+}
