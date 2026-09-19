@@ -1,6 +1,6 @@
 # Jev Plan Validator
 
-Validate free-text (`.md`) or structured (`.json`) execution plans with [TypeSafe Jev](https://docs.typesafe.ai) (`POST /v1/systemone`) using raw `curl` + `jq`. No SDK.
+Validate free-text (`.md`) or structured (`.json`) execution plans with [TypeSafe Jev](https://docs.typesafe.ai) (`POST /v1/systemone`) using raw `curl` + `jq` (`validate.sh`) or stdlib-only Python (`validate.py`). No SDK.
 
 Jev judges, bash decides. One API call asks 7–9 parallel questions, then confidence-gated routing in code emits `READY` / `NEEDS_REVISION` / `BLOCKED` / `REVIEW`.
 
@@ -33,6 +33,16 @@ SAFE_MIN=0.95 ./validate.sh plans/invalid.md
 JEV_MODEL=jev-latest ./validate.sh plans/valid.md
 ```
 
+Python port (`validate.py`, stdlib only) mirrors the shell script:
+
+```bash
+python3 validate.py plans/valid.md
+python3 validate.py --preset strict plans/valid.json
+python3 validate.py --dry-run plans/valid.md  # print payload, no network
+```
+
+Exit codes (Python): `0` = READY, `1` = NEEDS_REVISION/REVIEW, `2` = BLOCKED.
+
 ## Presets
 
 | Preset | `SAFE_MIN` | `EXE/COMP_MIN` | `RISK_BLOCK` | `RISK_READY` | `CONF_MIN` |
@@ -63,4 +73,4 @@ else                                        -> REVIEW: human check
 
 ## Requirements
 
-`bash`, `curl`, `jq`.
+`validate.sh`: `bash`, `curl`, `jq`. `validate.py`: `python3` stdlib only.
