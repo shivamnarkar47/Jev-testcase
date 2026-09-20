@@ -116,6 +116,31 @@ verdict, issue URL) — tune thresholds from this, not vibes.
 Exit codes: `0` = READY / signed-off, `1` = NEEDS_REVISION, `2` = ESCALATED /
 BLOCKED, `3` = error.
 
+## Revamp loop (`revamp.py`)
+
+Jev can't write — it only judges. So when a plan fails, `revamp.py` closes
+the loop with a generative model: route → rewrite from the findings →
+re-route, up to `--rounds` (default 2). Revisions are saved as
+`plan.rev1.md`, `plan.rev2.md`, … — the original is never overwritten.
+
+```bash
+export TYPESAFE_API_KEY=...      # for route.py (Jev, the judge)
+export REVAMP_API_KEY=...        # generative key (else OPENROUTER_API_KEY / OPENAI_API_KEY)
+python3 revamp.py plans/invalid.md
+python3 revamp.py --rounds 3 --repo owner/name plans/complex.md
+python3 revamp.py --dry-run plans/invalid.md  # show the rewrite prompt only
+python3 revamp.py --self-test
+```
+
+Rules: `READY` stops the loop. `NEEDS_REVISION` rewrites until rounds run
+out (exit 1, latest rev kept for the human). `ESCALATED` gets exactly one
+rewrite, posted as a comment on the existing issue — the human still decides,
+the loop never approves complex plans by itself. Every check and round is
+logged to `decisions.jsonl`.
+
+Config: `REVAMP_MODEL` (default `openai/gpt-4o-mini`), `REVAMP_BASE_URL`
+(default `https://openrouter.ai/api/v1`, any OpenAI-compatible endpoint).
+
 ## Examples
 
 * `plans/valid.md` / `plans/valid.json` — rate-limiting plan with tests, verification, rollback. Expect `READY`.
