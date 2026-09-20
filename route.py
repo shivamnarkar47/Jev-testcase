@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 import validate
 
@@ -139,37 +140,111 @@ def gh_repo(args):
     return None
 
 
+def gh_run(cmd):
+    """Run gh, returning stdout. Raises CalledProcessError on failure."""
+    return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+
+
+CACHE_FILE = os.environ.get("ROUTE_CACHE", ".route-cache.json")
+
+
+def load_cache():
+    try:
+        with open(CACHE_FILE) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_cache(cache):
+    tmp = CACHE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cache, f)
+    os.replace(tmp, CACHE_FILE)
+
+
+def issue_url(repo, num):
+    cmd = ["gh", "issue", "view", str(num), "--json", "url,state", "--jq",
+           'select(.state == "OPEN") | .url']
+    if repo:
+        cmd += ["--repo", repo]
+    return gh_run(cmd).strip() or None
+
+
+def comment_issue(num, body_file, repo):
+    cmd = ["gh", "issue", "comment", str(num), "--body-file", body_file]
+    if repo:
+        cmd += ["--repo", repo]
+    gh_run(cmd)
+    return issue_url(repo, num)
+
+
+def ensure_label(repo):
+    cmd = ["gh", "label", "create", LABEL,
+           "--description", "Escalated plan validations needing human review",
+           "--color", "B60205"]
+    if repo:
+        cmd += ["--repo", repo]
+    subprocess.run(cmd, capture_output=True, text=True)  # exists already -> fine
+
+
 def upsert_issue(title, body, short, repo):
     """Comment on the open issue for this plan hash, or create it. Returns URL or None."""
     if shutil.which("gh") is None:
+        print("warn: gh CLI not found, skipping issue upsert", file=sys.stderr)
         return None
     tmp = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
                                       dir="/tmp/opencode")
     try:
         tmp.write(body)
         tmp.close()
-        cmd = ["gh", "issue", "list", "--label", LABEL, "--state", "open",
-               "--search", f"{short} in:title", "--json", "number,title"]
-        if repo:
-            cmd += ["--repo", repo]
-        found = json.loads(subprocess.run(cmd, capture_output=True, text=True,
-                                          check=True).stdout or "[]")
+        ensure_label(repo)
+        cache = load_cache()
+        # 1. Local cache: lag-proof for same-machine re-runs. Closed/missing
+        #    entries are dropped so a re-review opens a fresh issue.
+        if short in cache:
+            url = issue_url(repo, cache[short])
+            if url:
+                comment_issue(cache[short], tmp.name, repo)
+                return url
+            del cache[short]
+        # 2. Remote list + client-side match (--search lags; list is fresher).
+        #    Retried: GitHub read-after-write can lag a few seconds.
+        found = []
+        for _ in range(3):
+            cmd = ["gh", "issue", "list", "--label", LABEL, "--state", "open",
+                   "--json", "number,title", "--limit", "100"]
+            if repo:
+                cmd += ["--repo", repo]
+            found = [i for i in json.loads(gh_run(cmd) or "[]")
+                     if short in (i.get("title") or "")]
+            if found:
+                break
+            time.sleep(3)
         if found:
             num = found[0]["number"]
-            cmd = ["gh", "issue", "comment", str(num), "--body-file", tmp.name]
-            if repo:
-                cmd += ["--repo", repo]
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
-            cmd = ["gh", "issue", "view", str(num), "--json", "url", "--jq", ".url"]
-            if repo:
-                cmd += ["--repo", repo]
-            return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout.strip()
+            url = comment_issue(num, tmp.name, repo)
+            if url:
+                cache[short] = num
+                save_cache(cache)
+                return url
         cmd = ["gh", "issue", "create", "--title", title, "--label", LABEL,
                "--body-file", tmp.name]
         if repo:
             cmd += ["--repo", repo]
-        return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout.strip()
-    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        url = gh_run(cmd).strip()
+        try:
+            num = int(url.rstrip("/").rsplit("/", 1)[-1])
+        except ValueError:
+            num = None
+        if num:
+            cache[short] = num
+            save_cache(cache)
+        return url or None
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+        err = getattr(e, "stderr", "") or ""
+        print(f"warn: issue upsert failed ({e}); packet printed instead\n{err}",
+              file=sys.stderr)
         return None
     finally:
         os.unlink(tmp.name)
