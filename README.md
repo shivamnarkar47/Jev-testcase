@@ -66,10 +66,61 @@ readiness == ready + safe high + risk low   -> READY: execute
 else                                        -> REVIEW: human check
 ```
 
+## Tiered routing (`route.py`)
+
+One validator strictness for every plan is wasteful — a typo fix and a prod
+migration get the same treatment. `route.py` adds a cheap Jev router call
+(`tier` choice, `difficulty` / `risk` scores, `needs_deep_review` noul) that
+picks the validation lane. The validator itself is `validate.py`, imported —
+no duplicated logic.
+
+```bash
+export TYPESAFE_API_KEY=...
+python3 route.py plans/trivial.md
+python3 route.py --repo owner/name plans/complex.md  # default: git remote / GH_REPO
+python3 route.py --dry-run plans/standard.md
+python3 route.py --self-test
+```
+
+| Condition | Lane |
+|---|---|
+| `trivial`, risk < 3, router conf ≥ 0.6 | Validator `--lenient`. Pass → READY. |
+| `standard` (default) | Validator `--normal`. |
+| `complex`, or risk ≥ 3, or conf < 0.6, or `needs_deep_review` ≥ 0.7 | Validator `--strict` for evidence, then **ESCALATE**. Never auto-READY. |
+
+Hard rules: risk vetoes tier (high-risk `trivial` still escalates), low
+confidence only moves *up* a lane, unreadable router output escalates.
+
+Tuning: `ROUTER_CONF_MIN` (0.6), `RISK_ESCALATE` (3.0), `REVIEW_NOUL_MIN`
+(0.7). Lane examples: `plans/trivial.md` → fast lane, `plans/standard.md` →
+normal, `plans/complex.md` → escalate.
+
+### Human escalation
+
+On ESCALATE the strict results are bundled into a review packet (plan, tier +
+scores, triggering rule, content sha) and upserted to a `plan-review` GitHub
+issue via `gh` CLI: content-hash (`sha256`, pinned in the title) search finds
+an open issue → new packet posted as a comment; otherwise a new issue is
+created. Unchanged re-runs upsert into the same issue; any edit opens a fresh
+one. No `gh` / no repo → packet prints to stdout, still exits 2.
+
+The loop closes when the human edits the plan and re-runs, or signs off:
+
+```bash
+python3 route.py --signoff <sha12> plans/complex.md  # fails if plan changed
+```
+
+Every run appends to `decisions.jsonl` (timestamp, plan, sha, tier, scores,
+verdict, issue URL) — tune thresholds from this, not vibes.
+
+Exit codes: `0` = READY / signed-off, `1` = NEEDS_REVISION, `2` = ESCALATED /
+BLOCKED, `3` = error.
+
 ## Examples
 
 * `plans/valid.md` / `plans/valid.json` — rate-limiting plan with tests, verification, rollback. Expect `READY`.
 * `plans/invalid.md` / `plans/invalid.json` — vague DB tweak, `DROP TABLE users`, Friday prod deploy, hallucinated tool `magic-optimizer-9000`, dep on `s9`. Expect `BLOCKED` / `NEEDS_REVISION`.
+* `plans/trivial.md` / `plans/standard.md` / `plans/complex.md` — one per router lane (typo fix / test+CI / Postgres migration). Expect fast-lane READY / normal verdict / ESCALATE.
 
 ## Requirements
 
